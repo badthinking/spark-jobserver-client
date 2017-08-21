@@ -17,14 +17,12 @@
 package spark.jobserver.client;
 
 import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
 
 import com.google.gson.JsonObject;
-import com.google.gson.annotations.SerializedName;
 
 import lombok.Getter;
 import lombok.Setter;
+import util.Pojo;
 
 /**
  * Presents the information of spark job result, when calling 
@@ -39,25 +37,7 @@ public class JobInfo extends Pojo {
 	private String classPath;
 	private String duration;
 	private Date startTime;
-	
-	@SerializedName("result")
-	private JsonObject result; 
-	private String contents; 
-	private Map<String, Object> extendAttributes = new HashMap<String, Object>();
-
-	public JobInfo(String contents, String jobId) {
-		this.contents = contents;
-		setJobId(jobId);
-	}
-
-	public JobInfo(String contents) {
-		this(contents, null);
-	}	
-
-	public void putExtendAttribute(String key, Object value) {
-		this.extendAttributes.put(key, value);
-	}	
-	
+	private JsonObject result;  //we do not know its class type 
 
 	/**
 	 * Judges current <code>JobResult</code> instance represents the 
@@ -90,50 +70,4 @@ public class JobInfo extends Pojo {
 	public boolean jobNotExists() {
 		return getStatus() == JobStatus.ERROR && getResult().toString().contains("No such job ID");
 	}
-	
-	/**
-	 * Judges current <code>JobResult</code> instance contains 
-	 * custom-defined extend attributes of result or not
-	 * 
-	 * @return true indicates it contains custom-defined extend attributes, false otherwise
-	 */
-	public boolean containsExtendAttributes() {
-		return !extendAttributes.isEmpty();
-	}
-	
-	/**
-	 * Convert result field into an string
-	 * @param <T>
-	 * @return result.
-	 */
-	public <T> T getResultAs(Class<T> t){
-		return gson.fromJson(result, t);
-	}	
-	
-	/**
-	 * Convert result field into an ErrorResult object, null if no error
-	 * @return error result.
-	 */
-	public Error getResultAsError(){
-		if(!isError())
-			return null;	
-		
-		return gson.fromJson(result, Error.class);
-	}
-	
-	
-	/**
-	 * Convert result field into an string
-	 * @return result.
-	 */
-	public String getResultAsString(){
-		return result.toString();
-	}
-	
-	@Getter @Setter
-	public static class Error{
-		private String message;
-		private String errorClass;
-		private String[] stack;
-	}		
 }

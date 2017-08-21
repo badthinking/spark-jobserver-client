@@ -16,497 +16,322 @@
 
 package spark.jobserver.client;
 
+import static util.Pojo.gson;
 
 import java.io.*;
 import java.util.*;
-import java.util.stream.Collectors;
 
-import static spark.jobserver.client.Pojo.gson;
+import com.google.gson.reflect.TypeToken;
 
-import com.google.gson.*;
-import com.google.gson.reflect.*;
+import lombok.*;
+import lombok.extern.log4j.*;
+import util.Http;
+
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
-import org.apache.http.*;
-import org.apache.http.client.methods.*;
-import org.apache.http.entity.ByteArrayEntity;
-import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.log4j.Logger;
+import org.apache.commons.lang3.StringUtils;
+
 
 /**
- * The default client implementation of <code>IJobServerClient</code>.
- * With the specific rest api, it can provide abilities to submit and manage 
- * Apache  jobs, jars, and job contexts in the  Job Server.
- *
+ * Java client implements Rest APIs provided by <a href="https://github.com/ooyala/spark-jobserver">Spark
+ *  Job Server</a>. For more information, refer to <a href="https://github.com/ooyala/spark-jobserver">
+ *  https://github.com/ooyala/spark-jobserver</a>.  
  */
-public class JobServerClient implements IJobServerClient {
-	private static Logger logger = Logger.getLogger(JobServerClient.class);
-	private static final int BUFFER_SIZE = 512 * 1024;
-	public final static transient JsonParser parser = new JsonParser();
-	private String jobServerUrl;
+@Getter
+@Setter
+@Builder
+@Log4j
+public class JobServerClient {
+	private String host;
+	private int port;
 
 	/**
-	 * Constructs an instance of <code>JobServerClientImpl</code>
-	 * with the given spark job server url.
+	 * <p>
+	 * This method implements the Rest API <code>'POST /binaries/&lt;appName&gt;' </code>
+	 * of the  Job Server.
 	 * 
-	 * @param jobServerUrl a url pointing to a existing spark job server
+	 * @param binStream Contents of the target jar file to be uploaded
+	 * @param alias of the uploaded jar file.
+	 * @return result.
+	 * @throws IOException
 	 */
-	JobServerClient(String jobServerUrl) {
-		if (!jobServerUrl.endsWith("/")) {
-			jobServerUrl = jobServerUrl + "/";
-		}
-		this.jobServerUrl = jobServerUrl;
-	}
-	
-	/**
-	 * {@inheritDoc}
-	 */
-	public List<JarInfo> getJars() throws JobServerClientException {
-		List<JarInfo> sparkJobJarInfos = new ArrayList<JarInfo>();
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			HttpGet getMethod = new HttpGet(jobServerUrl + "jars");
-			HttpResponse response = httpClient.execute(getMethod);
-			int statusCode = response.getStatusLine().getStatusCode();
-			String resContent = getResponseContent(response.getEntity());
-			if (statusCode == HttpStatus.SC_OK) {
-				TreeMap<String, Date> jars = gson.fromJson(resContent, new TypeToken<TreeMap<String, Date>>(){}.getType());
-				for(String name: jars.keySet()){
-					sparkJobJarInfos.add(new JarInfo(name, jars.get(name)));
-				}
-			} else {
-				logError(statusCode, resContent, true);
-			}
-		} catch (Exception e) {
-			processException("Error occurs when trying to get information of jars:", e);
-		} finally {
-			close(httpClient);
-		}
-		return sparkJobJarInfos;
+	public String uploadJobJar(InputStream binStream, String appName) throws IOException {
+		return Http.postJar(endpoint("/binaries/" + appName), IOUtils.toByteArray(binStream));
 	}
 
 	/**
-	 * {@inheritDoc}
-	 */
-	public boolean uploadJobJar(InputStream jarData, String appName)
-	    throws JobServerClientException {
-		if (jarData == null || appName == null || appName.trim().length() == 0) {
-			throw new JobServerClientException("Invalid parameters.");
-		}
-		HttpPost postMethod = new HttpPost(jobServerUrl + "jars/" + appName);
-
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			ByteArrayEntity entity = new ByteArrayEntity(IOUtils.toByteArray(jarData));
-			postMethod.setEntity(entity);
-			entity.setContentType("application/java-archive");
-			HttpResponse response = httpClient.execute(postMethod);
-			int statusCode = response.getStatusLine().getStatusCode();
-			getResponseContent(response.getEntity());
-			if (statusCode == HttpStatus.SC_OK) {
-				return true;
-			}
-		} catch (Exception e) {
-			logger.error("Error occurs when uploading spark job jars:", e);
-		} finally {
-			close(httpClient);
-			closeStream(jarData);
-		}
-		return false;
-	}
-	
-	/**
-	 * {@inheritDoc}
-	 */
-	public boolean uploadJobJar(File jarFile, String appName)
-		    throws JobServerClientException {
-		if (jarFile == null || !jarFile.getName().endsWith(".jar") 
-			|| appName == null || appName.trim().length() == 0) {
-			throw new JobServerClientException("Invalid parameters.");
-		}
-		InputStream jarIn = null;
-		try {
-			jarIn = new FileInputStream(jarFile);
-		} catch (FileNotFoundException fnfe) {
-			String errorMsg = "Error occurs when getting stream of the given jar file";
-			logger.error(errorMsg, fnfe);
-			throw new JobServerClientException(errorMsg, fnfe);
-		}
-		return uploadJobJar(jarIn, appName);
-	}
-
-	/**
-	 * {@inheritDoc}
-	 */
-	public List<String> getContexts() throws JobServerClientException {
-		List<String> contexts = new ArrayList<String>();
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			HttpGet getMethod = new HttpGet(jobServerUrl + "contexts");
-			HttpResponse response = httpClient.execute(getMethod);
-			int statusCode = response.getStatusLine().getStatusCode();
-			String resContent = getResponseContent(response.getEntity());
-			if (statusCode == HttpStatus.SC_OK) {
-				contexts = gson.fromJson(resContent, new TypeToken<ArrayList<String>>(){}.getType());
-			} else {
-				logError(statusCode, resContent, true);
-			}
-		} catch (Exception e) {
-			processException("Error occurs when trying to get information of contexts:", e);
-		} finally {
-			close(httpClient);
-		}
-		return contexts;
-	}
-
-	/**
-	 * {@inheritDoc}
-	 */
-	public boolean createContext(String contextName, Map<String, String> params) 
-		throws JobServerClientException {
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			//TODO add a check for the validation of contextName naming
-			if (!isNotEmpty(contextName)) {
-				throw new JobServerClientException("The given contextName is null or empty.");
-			}
-			StringBuffer postUrlBuff = new StringBuffer(jobServerUrl);
-			postUrlBuff.append("contexts/").append(contextName);
-			if (params != null && !params.isEmpty()) {
-				postUrlBuff.append('?');
-				int num = params.size();
-				for (String key : params.keySet()) {
-					postUrlBuff.append(key).append('=').append(params.get(key));
-					num--;
-					if (num > 0) {
-						postUrlBuff.append('&');
-					}
-				}
-				
-			}
-			HttpPost postMethod = new HttpPost(postUrlBuff.toString());
-			HttpResponse response = httpClient.execute(postMethod);
-			int statusCode = response.getStatusLine().getStatusCode();
-			String resContent = getResponseContent(response.getEntity());
-			if (statusCode == HttpStatus.SC_OK) {
-				return true;
-			} else {
-				logError(statusCode, resContent, false);
-			}
-		} catch (Exception e) {
-			processException("Error occurs when trying to create a context:", e);
-		} finally {
-			close(httpClient);
-		}
-		return false;
-	}
-
-	/**
-	 * {@inheritDoc}
-	 */
-	public boolean deleteContext(String contextName) 
-		throws JobServerClientException {
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			//TODO add a check for the validation of contextName naming
-			if (!isNotEmpty(contextName)) {
-				throw new JobServerClientException("The given contextName is null or empty.");
-			}
-			StringBuffer postUrlBuff = new StringBuffer(jobServerUrl);
-			postUrlBuff.append("contexts/").append(contextName);
-			
-			HttpDelete deleteMethod = new HttpDelete(postUrlBuff.toString());
-			HttpResponse response = httpClient.execute(deleteMethod);
-			int statusCode = response.getStatusLine().getStatusCode();
-			String resContent = getResponseContent(response.getEntity());
-			if (statusCode == HttpStatus.SC_OK) {
-				return true;
-			} else {
-				logError(statusCode, resContent, false);
-			}
-		} catch (Exception e) {
-			processException("Error occurs when trying to delete the target context:", e);
-		} finally {
-			close(httpClient);
-		}
-		return false;
-	}
-
-	/**
-	 * {@inheritDoc}
-	 */
-	public List<JobInfo> getJobs() throws JobServerClientException {
-		List<JobInfo> sparkJobInfos = new ArrayList<JobInfo>();
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			HttpGet getMethod = new HttpGet(jobServerUrl + "jobs");
-			HttpResponse response = httpClient.execute(getMethod);
-			int statusCode = response.getStatusLine().getStatusCode();
-			String resContent = getResponseContent(response.getEntity());
-			if (statusCode == HttpStatus.SC_OK) {
-				sparkJobInfos = gson.fromJson(resContent, new TypeToken<ArrayList<JobInfo>>(){}.getType());
-			} else {
-				logError(statusCode, resContent, true);
-			}
-		} catch (Exception e) {
-			processException("Error occurs when trying to get information of jobs:", e);
-		} finally {
-			close(httpClient);
-		}
-		return sparkJobInfos;
-	}
-	
-	/**
-	 * {@inheritDoc}
-	 */
-	public JobInfo startJob(String data, Map<String, String> params) throws JobServerClientException {
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			if (params == null || params.isEmpty()) {
-				throw new JobServerClientException("The given params is null or empty.");
-			}
-			if (params.containsKey(IJobServerClientConstants.PARAM_APP_NAME) &&
-			    params.containsKey(IJobServerClientConstants.PARAM_CLASS_PATH)) {
-				StringBuffer postUrlBuff = new StringBuffer(jobServerUrl);
-				postUrlBuff.append("jobs?");
-				int num = params.size();
-				for (String key : params.keySet()) {
-					postUrlBuff.append(key).append('=').append(params.get(key));
-					num--;
-					if (num > 0) {
-						postUrlBuff.append('&');
-					}
-				}
-				HttpPost postMethod = new HttpPost(postUrlBuff.toString());
-				if (data != null) {
-					StringEntity strEntity = new StringEntity(data);
-					strEntity.setContentEncoding("UTF-8");
-					strEntity.setContentType("text/plain");
-					postMethod.setEntity(strEntity);
-				}
-				
-				HttpResponse response = httpClient.execute(postMethod);
-				String resContent = getResponseContent(response.getEntity());
-				int statusCode = response.getStatusLine().getStatusCode();
-				if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_ACCEPTED) {
-					return parseResult(resContent);
-				} else {
-					logError(statusCode, resContent, true);
-				}
-			} else {
-				throw new JobServerClientException("The given params should contains appName and classPath");
-			}
-		} catch (Exception e) {
-			processException("Error occurs when trying to start a new job:", e);
-		} finally {
-			close(httpClient);
-		}
-		return null;
-	}
-
-	/**
-	 * {@inheritDoc}
-	 */
-	public JobInfo startJob(InputStream dataFileStream, Map<String, String> params) throws JobServerClientException {
-		BufferedReader br = null;
-		try {
-			br = new BufferedReader(new InputStreamReader(dataFileStream));
-			String data = br.lines().collect(Collectors.joining(System.lineSeparator()));
-			return startJob(data, params);
-		} catch (Exception e) {
-			processException("Error occurs when reading inputstream:", e);
-		} finally {
-			closeStream(br);
-		}
-		return null;
-	}
-
-	/**
-	 * {@inheritDoc}
-	 */
-	public JobInfo startJob(File dataFile, Map<String, String> params) throws JobServerClientException {
-		InputStream dataFileStream = null;
-		try {
-			dataFileStream = new FileInputStream(dataFile);
-			return startJob(dataFileStream, params);
-		} catch (Exception e) {
-			processException("Error occurs when reading file:", e);
-		} finally {
-			closeStream(dataFileStream);
-		}
-		return null;
-	}
-
-	/**
-	 * {@inheritDoc}
-	 */
-	public JobInfo getJobResult(String jobId) throws JobServerClientException {
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			if (!isNotEmpty(jobId)) {
-				throw new JobServerClientException("The given jobId is null or empty.");
-			}
-			HttpGet getMethod = new HttpGet(jobServerUrl + "jobs/" + jobId);
-			HttpResponse response = httpClient.execute(getMethod);
-			String resContent = getResponseContent(response.getEntity());
-			int statusCode = response.getStatusLine().getStatusCode();
-			if (statusCode == HttpStatus.SC_OK) {
-				final JobInfo jobResult = parseResult(resContent);
-				jobResult.setJobId(jobId);
-				return jobResult;
-			} else if (statusCode == HttpStatus.SC_NOT_FOUND) {
-				return new JobInfo(resContent, jobId);
-			} else {
-				logError(statusCode, resContent, true);
-			}
-		} catch (Exception e) {
-			processException("Error occurs when trying to get information of the target job:", e);
-		} finally {
-			close(httpClient);
-		}
-		return null;
-	}
-	
-	/**
-	 * {@inheritDoc}
-	 */
-	public JobConfig getConfig(String jobId) throws JobServerClientException {
-		final CloseableHttpClient httpClient = buildClient();
-		try {
-			if (!isNotEmpty(jobId)) {
-				throw new JobServerClientException("The given jobId is null or empty.");
-			}
-			HttpGet getMethod = new HttpGet(jobServerUrl + "jobs/" + jobId + "/config");
-			HttpResponse response = httpClient.execute(getMethod);
-			String resContent = getResponseContent(response.getEntity());
-			JobConfig jobConfg = new JobConfig();
-			HashMap<String,Object> configs = gson.fromJson(resContent, new TypeToken<HashMap<String,Object>>(){}.getType());
-			jobConfg.setConfigs(configs);
-			return jobConfg;
-		} catch (Exception e) {
-			processException("Error occurs when trying to get information of the target job config:", e);
-		} finally {
-			close(httpClient);
-		}
-		return null;
-	}
-
-	/**
-	 * Gets the contents of the http response from the given <code>HttpEntity</code>
-	 * instance.
+	 * Uploads a jar containing spark job to the  Job Server under
+	 * the given application name.
 	 * 
-	 * @param entity the <code>HttpEntity</code> instance holding the http response content
-	 * @return the corresponding response content
-	 */
-	protected String getResponseContent(HttpEntity entity) {
-		byte[] buff = new byte[BUFFER_SIZE];
-		StringBuffer contents = new StringBuffer();
-		InputStream in = null;
-		try {
-			in = entity.getContent();
-			BufferedInputStream bis = new BufferedInputStream(in);
-			int readBytes = 0;
-			while ((readBytes = bis.read(buff)) != -1) {
-				contents.append(new String(buff, 0, readBytes));
-			}
-		} catch (Exception e) {
-			logger.error("Error occurs when trying to reading response", e);
-		} finally {
-			closeStream(in);
-		}
-		return contents.toString().trim();
-	}
-	
-	/**
-	 * Closes the given stream.
+	 * <p>
+	 * This method implements the Rest API <code>'POST /binaries/&lt;appName&gt;' </code>
+	 * of the  Job Server.
 	 * 
-	 * @param stream the input/output stream to be closed
+	 * @param binFile the binary file
+	 * @param appName the application name under which the related  Job
+	 *     is about to run, meanwhile the application name also be the alias
+	 *     name of the uploaded jar file.
+	 * @return true if the operation of uploading is successful, false otherwise
+	 * @throws JobServerClientException if the given parameter jarData or
+	 *     appName is null, or error occurs when uploading the related spark job 
+	 *     jar
 	 */
-	protected void closeStream(Closeable stream) {
-		if (stream != null) {
-			try {
-				stream.close();
-			} catch (IOException ioe) {
-				logger.error("Error occurs when trying to close the stream:", ioe);
-			}
-		} else {
-			logger.error("The given stream is null");
-		}
+	public String uploadJobJar(File binFile, String appName) throws IOException {
+		return uploadJobJar(new FileInputStream(binFile), appName);
 	}
-	
-	/**
-	 * Handles the given exception with specific error message, and
-	 * generates a corresponding <code>JobServerClientException</code>.
-	 * 
-	 * @param errorMsg the corresponding error message
-	 * @param e the exception to be handled
-	 * @throws JobServerClientException the corresponding transformed 
-	 *        <code>JobServerClientException</code> instance
-	 */
-	protected void processException(String errorMsg, Exception e) throws JobServerClientException {
-		if (e instanceof JobServerClientException) {
-			throw (JobServerClientException)e;
-		}
-		logger.error(errorMsg, e);
-		throw new JobServerClientException(errorMsg, e);
-	}
-	
-	/**
-	 * Judges the given string value is not empty or not.
-	 * 
-	 * @param value the string value to be checked
-	 * @return true indicates it is not empty, false otherwise
-	 */
-	protected boolean isNotEmpty(String value) {
-		return value != null && !value.isEmpty();
-	}
-	
-	/**
-	 * Logs the response information when the status is not 200 OK,
-	 * and throws an instance of <code>JobServerClientException<code>.
-	 * 
-	 * @param errorStatusCode error status code
-	 * @param msg the message to indicates the status, it can be null
-	 * @param throwable true indicates throws an instance of <code>JobServerClientException</code>
-	 *       with corresponding error message, false means only log the error message.
-	 * @throws JobServerClientException containing the corresponding error message 
-	 */
-	private void logError(int errorStatusCode, String msg, boolean throwable) throws JobServerClientException {
-		StringBuffer msgBuff = new StringBuffer(" Job Server ");
-		msgBuff.append(jobServerUrl).append(" response ").append(errorStatusCode);
-		if (null != msg) {
-			msgBuff.append(" ").append(msg);
-		}
-		String errorMsg = msgBuff.toString();
-		logger.error(errorMsg);
-		if (throwable) {
-			throw new JobServerClientException(errorMsg);
-		}
-	}
-	
 
 	/**
-	 * Generates an instance of <code>JobResult</code> according to the given contents.
+	 * Lists all the contexts available in the  Job Server.
 	 * 
-	 * @param resContent the content of a http response
-	 * @return the corresponding <code>JobResult</code> instance
-	 * @throws Exception error occurs when parsing the http response content
+	 * <p>
+	 * This method implements the Rest API <code>'GET /contexts '</code>
+	 * of the  Job Server.
+	 * 
+	 * @return a list containing names of current contexts
+	 * @throws JobServerClientException error occurs when trying to get 
+	 *         information of contexts
 	 */
-	private JobInfo parseResult(String resContent) throws Exception {
-		JobInfo jobResult = gson.fromJson(resContent, JobInfo.class);
+	public List<String> getContexts() throws IOException {
+		String json = Http.get(endpoint("/contexts"));
+		return gson.fromJson(json, new TypeToken<ArrayList<String>>() {
+		}.getType());
+	}
+
+	/**
+	 * Creates a new context in the  Job Server with the given context name.
+	 * 
+	 * <p>
+	 * This method implements the Rest API <code>'POST /contexts/&lt;name&gt;' </code>
+	 * of the  Job Server.
+	 * 
+	 * @param contextName the name of the new context to be created, it should be not null
+	 *        and should begin with letter.
+	 * @param params a map containing the key-value pairs appended to appoint the context 
+	 *        settings if there is a need to configure the new created context, or null indicates
+	 *        the new context with the default configuration
+	 * @return true if the operation of creating is successful, false it failed to create
+	 *        the context because a context with the same name already exists
+	 * @throws JobServerClientException when the given contextName is null or empty string,
+	 *        or I/O error occurs while trying to create context in spark job server.
+	 */
+	public String createContext(String contextName, Map<String, String> params) throws IOException {
+		return Http.postJson(endpoint("/contexts/" + contextName, params), "");
+	}
+
+	/**
+	 * Delete a context with the given name in the  Job Server.
+	 * All the jobs running in it will be stopped consequently.
+	 * 
+	 * <p>
+	 * This method implements the Rest API <code>'DELETE /contexts/&lt;name&gt;' </code>
+	 * of the  Job Server.
+	 * 
+	 * @param contextName the name of the target context to be deleted, it should be not null
+	 *        and should begin with letter.
+	 * @return true if the operation of the deleting is successful, false otherwise
+	 * @throws JobServerClientException when the given contextName is null or empty string,
+	 *        or I/O error occurs while trying to delete context in spark job server.
+	 */
+	public String deleteContext(String contextName) throws IOException {
+		return Http.delete(endpoint("/contexts/" + contextName));
+	}
+
+	/**
+	 * Lists the last N jobs in the  Job Server.
+	 * 
+	 * <p>
+	 * This method implements the Rest API <code>'GET /jobs' </code> of the 
+	 * Job Server.
+	 * 
+	 * @return a list containing information of the jobs
+	 * @throws JobServerClientException error occurs when trying to get 
+	 *         information of jobs
+	 */
+	public List<JobInfo> getJobs() throws IOException {
+		String json = Http.get(endpoint("/jobs"));
+		return gson.fromJson(json, new TypeToken<ArrayList<JobInfo>>() {
+		}.getType());
+	}
+
+	/**
+	 * Start a new job with the given parameters.
+	 * 
+	 * <p>
+	 * This method implements the Rest API <code>'POST /jobs' </code> of the 
+	 * Job Server.
+	 * 
+	 * @param data contains the the data processed by the target job.
+	 * 		 <p>
+	 * 	     If it is null, it means the target spark job doesn't needs any data set
+	 *       in the job configuration.
+	 * 		 <p>
+	 * 	     If it is not null, the format should be like a key-value pair, such as 
+	 * 	     <code>dataKey=dataValue</code>, what the dataKey is determined by the 
+	 * 		 one used in the target spark job main class which is assigned by 
+	 *       IJobServerClientConstants.PARAM_CLASS_PATH.
+	 * @param params a non-null map containing parameters to start the job.
+	 *       the key should be the following ones:
+	 *       i. <code>IJobServerClientConstants.PARAM_APP_NAME</code>, necessary 
+	 *       one and should be one of the existing name in the calling of <code>GET /jars</code>.
+	 *       That means the appName is the alias name of the uploaded spark job jars.
+	 *
+	 *       ii.<code>IJobServerClientConstants.PARAM_CLASS_PATH</code>, necessary one
+	 *
+	 *       iii.<code>IJobServerClientConstants.PARAM_CONTEXT</code>, optional one
+	 *
+	 *       iv.<code>IJobServerClientConstants.PARAM_SYNC</code>, optional one
+	 *
+	 * @return the corresponding job status or job result
+	 * @throws JobServerClientException the given parameters exist null or empty value,
+	 *        or I/O error occurs when trying to start the new job
+	 */
+	public JobInfo startJob(String data, Map<String, String> params) throws IOException {
+		String json = Http.postJson(endpoint("/jobs", params), data);
+		return gson.fromJson(json, JobInfo.class);
+	}
+
+	/**
+	 * Start a new job with the given parameters.
+	 *
+	 * <p>
+	 * This method implements the Rest API <code>'POST /jobs' </code> of the 
+	 * Job Server.
+	 *
+	 * @param dataFileStream contains the the data processed by the target job.
+	 * 		 <p>
+	 * 	     If it is null, it means the target spark job doesn't needs any data set
+	 *       in the job configuration.
+	 * 		 <p>
+	 * 	     If it is not null, the format should be Typesafe Config Style, such as
+	 * 	     json, properties file etc. See <a href="http://github.com/typesafehub/config">http://github.com/typesafehub/config</a>
+	 * 	     what the keys in the file are determined by the
+	 * 		 one used in the target spark job main class which is assigned by
+	 *       IJobServerClientConstants.PARAM_CLASS_PATH.
+	 * @param params a non-null map containing parameters to start the job.
+	 *       the key should be the following ones:
+	 *       i. <code>IJobServerClientConstants.PARAM_APP_NAME</code>, necessary
+	 *       one and should be one of the existing name in the calling of <code>GET /jars</code>.
+	 *       That means the appName is the alias name of the uploaded spark job jars.
+	 *
+	 *       ii.<code>IJobServerClientConstants.PARAM_CLASS_PATH</code>, necessary one
+	 *
+	 *       iii.<code>IJobServerClientConstants.PARAM_CONTEXT</code>, optional one
+	 *
+	 *       iv.<code>IJobServerClientConstants.PARAM_SYNC</code>, optional one
+	 *
+	 * @return the corresponding job status or job result
+	 * @throws JobServerClientException the given parameters exist null or empty value,
+	 *        or I/O error occurs when trying to start the new job
+	 */
+	public JobInfo startJob(InputStream dataFileStream, Map<String, String> params) throws IOException {
+		return startJob(IOUtils.toString(dataFileStream), params);
+	}
+
+	/**
+	 * Start a new job with the given parameters.
+	 *
+	 * <p>
+	 * This method implements the Rest API <code>'POST /jobs' </code> of the 
+	 * Job Server.
+	 *
+	 * @param dataFile contains the the data processed by the target job.
+	 * 		 <p>
+	 * 	     If it is null, it means the target spark job doesn't needs any data set
+	 *       in the job configuration.
+	 * 		 <p>
+	 * 	     If it is not null, the format should be Typesafe Config Style, such as
+	 * 	     json, properties file etc. See <a href="http://github.com/typesafehub/config">http://github.com/typesafehub/config</a>
+	 * 	     what the keys in the file are determined by the
+	 * 		 one used in the target spark job main class which is assigned by
+	 *       IJobServerClientConstants.PARAM_CLASS_PATH.
+	 * @param params a non-null map containing parameters to start the job.
+	 *       the key should be the following ones:
+	 *       i. <code>IJobServerClientConstants.PARAM_APP_NAME</code>, necessary
+	 *       one and should be one of the existing name in the calling of <code>GET /jars</code>.
+	 *       That means the appName is the alias name of the uploaded spark job jars.
+	 *
+	 *       ii.<code>IJobServerClientConstants.PARAM_CLASS_PATH</code>, necessary one
+	 *
+	 *       iii.<code>IJobServerClientConstants.PARAM_CONTEXT</code>, optional one
+	 *
+	 *       iv.<code>IJobServerClientConstants.PARAM_SYNC</code>, optional one
+	 *
+	 * @return the corresponding job status or job result
+	 * @throws JobServerClientException the given parameters exist null or empty value,
+	 *        or I/O error occurs when trying to start the new job
+	 */
+	public JobInfo startJob(File dataFile, Map<String, String> params) throws IOException {
+		return startJob(FileUtils.readFileToString(dataFile), params);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * 
+	 * @throws Exception
+	 * @throws IOException
+	 */
+	public JobInfo getJobResult(String jobId) throws IOException {
+		String json = Http.get(endpoint("/jobs/" + jobId));
+		final JobInfo jobResult = gson.fromJson(json, JobInfo.class);
+		jobResult.setJobId(jobId);
 		return jobResult;
 	}
+
+	/**
+	 * Gets the job configuration of a specific job.
+	 * 
+	 * <p>
+	 * This method implements the Rest API <code>'GET /jobs/&lt;jobId&gt;/config' </code>
+	 * of the  Job Server.
+	 * 
+	 * @param jobId the id of the target job
+	 * @return the corresponding <code>JobConfig</code> instance if the job
+	 * with the given jobId exists, or null if there is no corresponding job in 
+	 * the spark job server.
+	 * @throws JobServerClientException error occurs when trying to get 
+	 *         information of the target job configuration
+	 */
+	public JobConfig getConfig(String jobId) throws IOException {
+		String json = Http.get(endpoint("/jobs/" + jobId + "/config"));
+		return gson.fromJson(json, JobConfig.class);
+	}
 	
-	private CloseableHttpClient buildClient() {
-		return HttpClientBuilder.create().build();
+	/**
+	 * Implements the Rest API <code>'GET /binaries'</code> of the Job Server.
+	 * 
+	 * @return a Map containing jar name and uploaded date time.
+	 * @throws IOException error occurs when trying to get information of spark job binaries
+	 */
+	public Binaries getBinaries() throws IOException{
+		String json = Http.get(endpoint("/binaries"));
+		return gson.fromJson(json, Binaries.class);
 	}
 
-	private void close(final CloseableHttpClient client) {
-		try {
-			client.close();
-		} catch (final IOException e) {
-			logger.error("could not close client" , e);
-		}
+	public String deleteBinary(String name) throws IOException{
+		return Http.delete(endpoint("/binaries/" + name));
 	}
+	
+	/**
+	 * construct url with path
+	 * @param path
+	 * @return
+	 */
+	private String endpoint(String path) {
+		return endpoint(path, null);
+	}
+
+	/**
+	 * Construct url with path and parameters
+	 * @param path
+	 * @return
+	 */
+	private String endpoint(String path, Map<String, String> args) {
+		String url = StringUtils.join("http://", host, ":", port, path.startsWith("/") ? "": "/", path);
+		if (args != null && !args.isEmpty()) {
+			Optional<String> argstr = args.entrySet().stream().map(e -> StringUtils.join(e.getKey(), "=", e.getValue()))
+					.reduce((a, b) -> a + "&" + b);
+			url = StringUtils.join(url, "?", argstr.orElse(""));
+		}
+		return url;
+	}	
 }

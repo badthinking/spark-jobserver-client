@@ -20,10 +20,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import spark.jobserver.client.IJobServerClient;
-import spark.jobserver.client.IJobServerClientConstants;
+import junit.framework.Assert;
+import spark.jobserver.client.Constants;
 import spark.jobserver.client.JobInfo;
-import spark.jobserver.client.JobServerClientFactory;
 
 import java.io.File;
 import java.io.InputStream;
@@ -32,23 +31,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
-import static org.hamcrest.Matchers.is;
 
 /**
  * a test class for JobServerClientImpl
  */
 public class JobServerClientTest {
-	private static final String defaultJobHost = "192.168.1.103";
-	private static final String defaultJobPort = "8090";
-	private static String endpoint = String.format("http://%s:%s/", defaultJobHost, defaultJobPort);
-	private IJobServerClient client;
-	private static final long POOLING_TIME_SEC = 1;
-
+	private JobServerClient client = JobServerClient.builder().host("slc09woc.us.oracle.com").port(8090).build();
+	//private JobServerClient client = JobServerClient.builder().host("h21").port(8090).build();
+	
 	@Before
 	public void setUp() throws Exception {
-		client = JobServerClientFactory.getInstance().createJobServerClient(endpoint);
 	}
 
 	@After
@@ -56,10 +48,9 @@ public class JobServerClientTest {
 	}
 
 
-	@Test
-	public void testJobs() throws Exception {
-		List<JobInfo> jobs = client.getJobs();
-		
+	//@Test
+	public void listJobs() throws Exception {
+		List<JobInfo> jobs = client.getJobs();		
 		for(JobInfo job: jobs){
 			if(job.isFinished()){
 				JobInfo r = client.getJobResult(job.getJobId());
@@ -73,20 +64,26 @@ public class JobServerClientTest {
 		}
 	}
 	
-	@Test
-	public void testJars() throws Exception {
-		for(JarInfo jar: client.getJars()){
-			System.out.println(jar);
+	//@Test
+	public void listBinaries() throws Exception {
+		Binaries bins = client.getBinaries();
+		for(String name: bins.keySet()){
+			System.out.println(name + ":" + bins.get(name));
 		}
 	}
 	
-	@Test
-	public void testContexts() throws Exception {
+	//@Test
+	public void createContext() throws Exception {
 		Map<String, String> params = new HashMap<String, String>();
-		params.put(IJobServerClientConstants.PARAM_NUM_CPU_CORES, "2");
-		client.createContext("context1", params);
-		
-		System.out.println(Pojo.gson.toJson(client.getContexts()));
+		params.put(Constants.PARAM_NUM_CPU_CORES, "2");
+		String result = client.createContext("context1", params);
+		Assert.assertTrue(result.contains("context1"));
+	}
+	
+	//@Test
+	public void deleteContext() throws Exception {
+		String result = client.deleteContext("context1");
+		Assert.assertTrue(result.contains("SUCCESS"));
 	}
 	
 	
@@ -96,28 +93,26 @@ public class JobServerClientTest {
 	 * 
 	 * @throws Exception
 	 */
-	@Test
+	//@Test
 	public void testRunJobWithFile() throws Exception {
 		InputStream jarFileStream = ClassLoader.getSystemResourceAsStream("./job-server-tests.jar");
 		File inputData = new File(ClassLoader.getSystemResource("input.json").toURI());
 
 		String appName = "runjob-with-file-test";
-		boolean isUploaded = client.uploadJobJar(jarFileStream, appName);
-
-		assertThat(isUploaded, is(true));
+		String str =client.uploadJobJar(jarFileStream, appName);
+		Assert.assertEquals("OK", str);
 
 		Map<String, String> params = new HashMap<String, String>();
-		params.put(IJobServerClientConstants.PARAM_APP_NAME, appName);
-		params.put(IJobServerClientConstants.PARAM_CLASS_PATH, "spark.jobserver.WordCountExample");
-		params.put(IJobServerClientConstants.PARAM_SYNC, "true");
+		params.put(Constants.PARAM_APP_NAME, appName);
+		params.put(Constants.PARAM_CLASS_PATH, "spark.jobserver.WordCountExample");
 
 		JobInfo result = client.startJob(inputData, params);
 		while (result.isRunning()) {
-			TimeUnit.SECONDS.sleep(POOLING_TIME_SEC);
+			TimeUnit.SECONDS.sleep(1);
 			result = client.getJobResult(result.getJobId());
 		}
 
-		assertThat(result.getResultAsString(), is("{\"fdsafd\":1,\"a\":4,\"b\":1,\"dfsf\":1,\"c\":1}"));
+		Assert.assertEquals(4, result.getResult().get("a").getAsInt());
 	}
 
 	/**
@@ -128,18 +123,32 @@ public class JobServerClientTest {
 	@Test
 	public void testUploadJar() throws Exception {
 		InputStream jarFileStream = ClassLoader.getSystemResourceAsStream("./job-server-tests.jar");
-
 		String appName = "upload-jar-test";
-		boolean isUploaded = client.uploadJobJar(jarFileStream, appName);
+		String str = client.uploadJobJar(jarFileStream, appName);
+		Assert.assertEquals("OK", str);
 
-		assertThat(isUploaded, is(true));
+		//run it
+		Map<String, String> params = new HashMap<String, String>();
+		params.put(Constants.PARAM_APP_NAME, appName);
+		params.put(Constants.PARAM_CLASS_PATH, "spark.jobserver.WordCountExample");
+		params.put(Constants.PARAM_SYNC, "true");		
+		JobInfo result = client.startJob("input.string= fdsafd dfsf a b c a a a ", params);
+		Assert.assertEquals(4, result.getResult().get("a").getAsLong());
+		System.out.println(result);
+	}
+
+	//@Test
+	public void test2() throws Exception {
+		File jarFile = new File("d:/scratch/llian/workspace/job-server-tests/target/job-server-test-1.0.jar");
+		String appName = "test2";
+		String str = client.uploadJobJar(jarFile, appName);
+		Assert.assertEquals("OK", str);
 
 		Map<String, String> params = new HashMap<String, String>();
-		params.put(IJobServerClientConstants.PARAM_APP_NAME, appName);
-		params.put(IJobServerClientConstants.PARAM_CLASS_PATH, "spark.jobserver.WordCountExample");
-		params.put(IJobServerClientConstants.PARAM_SYNC, "true");
-		
-		JobInfo result = client.startJob("input.string= fdsafd dfsf a b c a a a ", params);
-		assertThat(result.getResultAsString(), is("{\"fdsafd\":1,\"a\":4,\"b\":1,\"dfsf\":1,\"c\":1}"));
+		params.put(Constants.PARAM_APP_NAME, appName);
+		params.put(Constants.PARAM_CLASS_PATH, "spark.jobserver.JavaHelloWorldJob");
+		params.put(Constants.PARAM_SYNC, "true");		
+		JobInfo job = client.startJob("input.string = fdsafd dfsf a b c a a a ", params);
+		System.out.println(job);
 	}
 }

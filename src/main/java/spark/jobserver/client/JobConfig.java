@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import lombok.*;
+import util.Pojo;
 
 /**
  * Presents the information of spark job configuration, when

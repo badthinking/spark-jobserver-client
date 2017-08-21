@@ -20,7 +20,7 @@ package spark.jobserver.client;
  * Defines the constants used in public for
  * the spark job server client.
  */
-public interface IJobServerClientConstants {
+public interface Constants {
 
 	/**
 	 * Parameter used to create job context, indicates the executor
