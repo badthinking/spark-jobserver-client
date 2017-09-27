@@ -18,7 +18,7 @@ package spark.jobserver.client;
 
 import java.util.Date;
 
-import com.google.gson.JsonObject;
+import com.google.gson.JsonElement;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -37,7 +37,7 @@ public class JobInfo extends Pojo {
 	private String classPath;
 	private String duration;
 	private Date startTime;
-	private JsonObject result;  //we do not know its class type 
+	private JsonElement result;  //we do not know its class type 
 
 	/**
 	 * Judges current <code>JobResult</code> instance represents the 

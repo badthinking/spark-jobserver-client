@@ -24,7 +24,6 @@ import java.util.*;
 import com.google.gson.reflect.TypeToken;
 
 import lombok.*;
-import lombok.extern.log4j.*;
 import util.Http;
 
 import org.apache.commons.io.FileUtils;
@@ -40,7 +39,6 @@ import org.apache.commons.lang3.StringUtils;
 @Getter
 @Setter
 @Builder
-@Log4j
 public class JobServerClient {
 	private String host;
 	private int port;
@@ -56,7 +54,7 @@ public class JobServerClient {
 	 * @throws IOException
 	 */
 	public String uploadJobJar(InputStream binStream, String appName) throws IOException {
-		return Http.postJar(endpoint("/binaries/" + appName), IOUtils.toByteArray(binStream));
+		return Http.postJar(makeUrl("/binaries/" + appName), IOUtils.toByteArray(binStream));
 	}
 
 	/**
@@ -92,7 +90,7 @@ public class JobServerClient {
 	 *         information of contexts
 	 */
 	public List<String> getContexts() throws IOException {
-		String json = Http.get(endpoint("/contexts"));
+		String json = Http.get(makeUrl("/contexts"));
 		return gson.fromJson(json, new TypeToken<ArrayList<String>>() {
 		}.getType());
 	}
@@ -115,7 +113,7 @@ public class JobServerClient {
 	 *        or I/O error occurs while trying to create context in spark job server.
 	 */
 	public String createContext(String contextName, Map<String, String> params) throws IOException {
-		return Http.postJson(endpoint("/contexts/" + contextName, params), "");
+		return Http.postJson(makeUrl("/contexts/" + contextName, params), "");
 	}
 
 	/**
@@ -133,7 +131,7 @@ public class JobServerClient {
 	 *        or I/O error occurs while trying to delete context in spark job server.
 	 */
 	public String deleteContext(String contextName) throws IOException {
-		return Http.delete(endpoint("/contexts/" + contextName));
+		return Http.delete(makeUrl("/contexts/" + contextName));
 	}
 
 	/**
@@ -148,7 +146,7 @@ public class JobServerClient {
 	 *         information of jobs
 	 */
 	public List<JobInfo> getJobs() throws IOException {
-		String json = Http.get(endpoint("/jobs"));
+		String json = Http.get(makeUrl("/jobs"));
 		return gson.fromJson(json, new TypeToken<ArrayList<JobInfo>>() {
 		}.getType());
 	}
@@ -186,7 +184,7 @@ public class JobServerClient {
 	 *        or I/O error occurs when trying to start the new job
 	 */
 	public JobInfo startJob(String data, Map<String, String> params) throws IOException {
-		String json = Http.postJson(endpoint("/jobs", params), data);
+		String json = Http.postJson(makeUrl("/jobs", params), data);
 		return gson.fromJson(json, JobInfo.class);
 	}
 
@@ -264,6 +262,10 @@ public class JobServerClient {
 		return startJob(FileUtils.readFileToString(dataFile), params);
 	}
 
+	public String killJob(String jobId) throws IOException {
+		return Http.delete(makeUrl("jobs/" + jobId));
+	}
+
 	/**
 	 * {@inheritDoc}
 	 * 
@@ -271,7 +273,7 @@ public class JobServerClient {
 	 * @throws IOException
 	 */
 	public JobInfo getJobResult(String jobId) throws IOException {
-		String json = Http.get(endpoint("/jobs/" + jobId));
+		String json = Http.get(makeUrl("/jobs/" + jobId));
 		final JobInfo jobResult = gson.fromJson(json, JobInfo.class);
 		jobResult.setJobId(jobId);
 		return jobResult;
@@ -292,7 +294,7 @@ public class JobServerClient {
 	 *         information of the target job configuration
 	 */
 	public JobConfig getConfig(String jobId) throws IOException {
-		String json = Http.get(endpoint("/jobs/" + jobId + "/config"));
+		String json = Http.get(makeUrl("/jobs/" + jobId + "/config"));
 		return gson.fromJson(json, JobConfig.class);
 	}
 	
@@ -303,12 +305,12 @@ public class JobServerClient {
 	 * @throws IOException error occurs when trying to get information of spark job binaries
 	 */
 	public Binaries getBinaries() throws IOException{
-		String json = Http.get(endpoint("/binaries"));
+		String json = Http.get(makeUrl("/binaries"));
 		return gson.fromJson(json, Binaries.class);
 	}
 
 	public String deleteBinary(String name) throws IOException{
-		return Http.delete(endpoint("/binaries/" + name));
+		return Http.delete(makeUrl("/binaries/" + name));
 	}
 	
 	/**
@@ -316,8 +318,8 @@ public class JobServerClient {
 	 * @param path
 	 * @return
 	 */
-	private String endpoint(String path) {
-		return endpoint(path, null);
+	private String makeUrl(String path) {
+		return makeUrl(path, null);
 	}
 
 	/**
@@ -325,7 +327,7 @@ public class JobServerClient {
 	 * @param path
 	 * @return
 	 */
-	private String endpoint(String path, Map<String, String> args) {
+	private String makeUrl(String path, Map<String, String> args) {
 		String url = StringUtils.join("http://", host, ":", port, path.startsWith("/") ? "": "/", path);
 		if (args != null && !args.isEmpty()) {
 			Optional<String> argstr = args.entrySet().stream().map(e -> StringUtils.join(e.getKey(), "=", e.getValue()))

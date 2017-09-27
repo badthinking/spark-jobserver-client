@@ -17,7 +17,7 @@ public class Http {
 			.writeTimeout(600, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build();
 
 	public static String get(String url) throws IOException {
-		log.debug("GET " + url);
+		log.info("GET " + url);
 		Request request = new Request.Builder().url(url).get().build();
 		return processRequest(request);
 	}
@@ -35,13 +35,13 @@ public class Http {
 	}
 
 	public static String delete(String url) throws IOException {
-		log.debug("DELETE " + url);
+		log.info("DELETE " + url);
 		Request request = new Request.Builder().url(url).delete().build();
 		return processRequest(request);
 	}
 
 	private static String post(String type, String url, Object data) throws IOException {
-		log.debug("POST " + url);
+		log.info("POST " + url);
 
 		RequestBody body = null;
 		switch (type) {
